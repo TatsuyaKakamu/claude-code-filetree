@@ -14,7 +14,7 @@ import { boxLook, fitPixels, inkOn, over, paint, type PixelLook, png, readable, 
 import { CELL_PROBE, colorOf, GHOSTTY_ARGS, parseGhostty, type TermColors } from './term'
 import type { ZoneProps } from './zone'
 import type { HitProps } from './hit'
-import { activityIcon, barSvg, selectionOn, DESK, DESK_GIT, GAP_PX, iconSvg, type IconName, ink, lighten, nodeIcon, ROW_PX, rowSvg, STEP_PX, toolSvg } from './svg'
+import { activityIcon, barSvg, selectionOn, DESK, DESK_GIT, DESK_GIT_LIGHT, DESK_LIGHT, GAP_PX, iconSvg, type IconName, ink, lighten, nodeIcon, ROW_PX, rowSvg, STEP_PX, toolSvg } from './svg'
 import { ADD_COLOR, DEL_COLOR, type Palette, parsePalette } from './palette'
 import { CHEVRON_CLOSED, CHEVRON_OPEN, fileIcon, GIT_COLOR } from './icons'
 import {
@@ -103,6 +103,7 @@ let gitStamp: string | null = null
 let gitDirOf = { root: '', dir: '' }
 let ageTick: Timer | null = null
 let lightTerminal = false
+let lightDesk = false
 let generation = 0
 let lastPress = { key: '', at: 0 }
 let noNerd = false
@@ -265,11 +266,25 @@ function faint(hex: string): string {
   return `#${[16, 8, 0].map(x => ch(x).toString(16).padStart(2, '0')).join('')}`
 }
 
+async function osLight($: EngineInterface): Promise<boolean> {
+  const os = await osName($)
+  if (os === 'win32') {
+    const run = await $.process.run(['reg', 'query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize', '/v', 'AppsUseLightTheme'], { timeoutMs: 3_000 })
+    return /AppsUseLightTheme\s+REG_DWORD\s+0x0*1\b/i.test(run.stdout)
+  }
+  if (os === 'darwin') return (await $.process.run(['defaults', 'read', '-g', 'AppleInterfaceStyle'], { timeoutMs: 3_000 })).exitCode !== 0
+  return false
+}
+
+// The desktop app passes no theme to a mod: a light or dark theme setting wins, and auto follows the OS appearance
 async function readThemeSetting($: EngineInterface): Promise<void> {
   const row = (await $.config.list()).find(r => r.key === 'theme')
-  const light = typeof row?.value === 'string' && row.value.startsWith('light')
-  if (light === lightTerminal) return
+  const value = typeof row?.value === 'string' ? row.value : ''
+  const light = value.startsWith('light')
+  const desk = light || (!value.startsWith('dark') && (await osLight($).catch(() => false)))
+  if (light === lightTerminal && desk === lightDesk) return
   lightTerminal = light
+  lightDesk = desk
   void $.ui.invalidate('ui.render')
 }
 
@@ -2790,11 +2805,14 @@ export const register: Register = (on, options) => {
     const desk = e.surface === 'desktop' && Boolean(Svg)
     const Image = 'Image' in elements ? elements.Image : undefined
     const t = await get($)
-    const light = e.surface !== 'desktop' && lightTerminal
+    const light = e.surface === 'desktop' ? lightDesk : lightTerminal
+    const DK = light ? DESK_LIGHT : DESK
+    const DKG = light ? DESK_GIT_LIGHT : DESK_GIT
+    const deskInk = (color: string | undefined, fallback: string) => ink(color, fallback, light)
     const theme: Theme = { ...DEFAULT_THEME, ...palette.theme }
     const tones = light ? LIGHT_TONES : TONES
     const mutedText = theme.muted ? { color: theme.muted } : { dimColor: true }
-    const gitColors = { ...(desk ? DESK_GIT : GIT_COLOR), ...palette.git }
+    const gitColors = { ...(desk ? DKG : GIT_COLOR), ...palette.git }
     const addColor = palette.add ?? ADD_COLOR
     const delColor = palette.del ?? DEL_COLOR
     const deskDiff = (source: string, key: string) => {
@@ -2818,13 +2836,13 @@ export const register: Register = (on, options) => {
         else if (kind === ' ') rows.push({ kind, text: line.slice(1), old: old++, new: cur++ })
       }
       const digits = Math.max(2, ...rows.map(r => String(Math.max(r.old, r.new)).length))
-      const add = ink(addColor, DESK_GIT.A ?? DESK.accent)
-      const del = ink(delColor, DESK.urgent)
-      const tintOf = (kind: string) => (kind === '+' ? DESK.addBg : kind === '-' ? DESK.delBg : undefined)
+      const add = deskInk(addColor, DKG.A ?? DK.accent)
+      const del = deskInk(delColor, DK.urgent)
+      const tintOf = (kind: string) => (kind === '+' ? DK.addBg : kind === '-' ? DK.delBg : undefined)
       return (
         <Box key={`${key}-diff`} flexDirection="column">
           {rows.map((r, j) => r.kind === '@' ? (
-            <Box key={`${key}-h${j}`} flexDirection="row" alignItems="center" height={ROW_PX} paddingLeft={1} backgroundColor={DESK.hover}>
+            <Box key={`${key}-h${j}`} flexDirection="row" alignItems="center" height={ROW_PX} paddingLeft={1} backgroundColor={DK.hover}>
               <Text color={mutedInk} size="footnote" tabular wrap="truncate-end">{r.text}</Text>
             </Box>
           ) : (
@@ -2841,15 +2859,15 @@ export const register: Register = (on, options) => {
     const selBg = selectionOn(theme.selection, theme.bg, light)
     const rowColors = { activeBg: selBg, hoverBg: palette.hover ?? (theme.selection.startsWith('#') ? faint(theme.selection) : ''), tones: light ? LIGHT_SHIMMER : SHIMMER }
     nativeScroll = e.surface === 'desktop'
-    const accentInk = ink(theme.accent, DESK.accent)
-    const mutedInk = ink(theme.muted, DESK.muted)
-    const dc = (c: string | undefined) => (desk && c ? ink(c, c) : c)
-    const tint = (c: string | undefined) => (c === '' ? { dimColor: true } : c === undefined ? {} : { color: desk ? ink(c, c) : c })
+    const accentInk = deskInk(theme.accent, DK.accent)
+    const mutedInk = deskInk(theme.muted, DK.muted)
+    const dc = (c: string | undefined) => (desk && c ? deskInk(c, c) : c)
+    const tint = (c: string | undefined) => (c === '' ? { dimColor: true } : c === undefined ? {} : { color: desk ? deskInk(c, c) : c })
     const bgRgb = rgbOf(theme.bg)
     const searchBg = bgRgb ? toHex(over(bgRgb, rgbOf(theme.fg) ?? (light ? [0, 0, 0] : [255, 255, 255]), 0.07)) : light ? 'ansi256(254)' : 'ansi256(236)'
     const glow = (color: string, id: string) => (hovered === id ? lighten(color) : color)
     const toggle = (id: 'case' | 'regex', label: string, active: boolean, bad: boolean) => {
-      const color = bad ? ink(theme.urgent, DESK.urgent) : active ? accentInk : mutedInk
+      const color = bad ? deskInk(theme.urgent, DK.urgent) : active ? accentInk : mutedInk
       return desk ? (
         <Box key={`tool-${id}`} position="relative" flexShrink={0} flexDirection="row" alignItems="center">
           <Text color={glow(color, id)} hover={{ color: lighten(color) }} weight={active ? 'semibold' : 'regular'}>{label}</Text>
@@ -2863,8 +2881,8 @@ export const register: Register = (on, options) => {
         </Button>
       )
     }
-    const deskSel = palette.theme.selection ?? DESK.selection
-    const deskHover = palette.hover ?? DESK.hover
+    const deskSel = palette.theme.selection ?? DK.selection
+    const deskHover = palette.hover ?? DK.hover
     const button = (b: ButtonProps & { icon?: IconName; hint?: string }) => desk && Svg && b.icon ? (
       <Box key={`tool-${b.id}`} position="relative" flexDirection="row" alignItems="center" flexShrink={0}>
         <Svg key={`tool-icon-${b.id}${b.id === 'refresh' ? `-${reloading ? 'spin' : reloadSpin}` : ''}`} source={toolSvg(b.icon, glow(b.dim && !(b.id === 'refresh' && reloading) ? mutedInk : accentInk, b.id), b.id === 'refresh' && reloading ? SPIN_MS : 0)} alt={`${WORDS[b.id] ?? b.id} button`} width={24} height={24} />
@@ -2877,7 +2895,7 @@ export const register: Register = (on, options) => {
       const over = buttons.find(b => b.id === hovered)
       const text = over?.hint
       if (!text) return null
-      const tint = over && !over.dim ? accentInk : ink(theme.fg, DESK.fg)
+      const tint = over && !over.dim ? accentInk : deskInk(theme.fg, DK.fg)
       const room = e.props.bodyColumns - title - buttons.reduce((w, b) => w + (desk ? DESK_ICON_COLS : b.label.length + 1), 0) - 2
       return text.length <= room ? <Text color={tint} wrap="truncate-end">{`${text} `}</Text> : null
     }
@@ -2913,7 +2931,7 @@ export const register: Register = (on, options) => {
           <Box flexDirection="column" minHeight={Math.max(1, e.props.scroll?.bodyRows ?? 1)} backgroundColor={theme.bg || undefined}>
             <Box key="pv-head" flexDirection="row" alignItems="center">
               <Box key="pv-back" flexDirection="row" alignItems="center" flexShrink={0}>
-                <Svg key="pv-back-icon" source={rowSvg(0, null, 'chevron-left', mutedInk, DESK.muted, 0)} alt="back to files" width={STEP_PX * 2} height={ROW_PX} />
+                <Svg key="pv-back-icon" source={rowSvg(0, null, 'chevron-left', mutedInk, DK.muted, 0, DK.guide)} alt="back to files" width={STEP_PX * 2} height={ROW_PX} />
                 <Button key="back" plain dimColor hover={{ dimColor: false }} hotkey="h" autoFocus label="Files" onPress={() => void closePreview($)} />
               </Box>
               <Text {...mutedText}>{' / '}</Text>
@@ -3078,7 +3096,7 @@ export const register: Register = (on, options) => {
     const toolGap = desk ? 0 : toolWidth(toolButtons, 2) <= toolRoom ? 2 : 1
     const tipButton = buttons.find(b => b.id === hovered)
     const tipText = tipButton?.hint ?? ''
-    const tipProps = tipButton && !tipButton.dim ? { color: desk ? accentInk : theme.accent } : desk ? { color: ink(theme.fg, DESK.fg) } : theme.fg ? { color: theme.fg } : {}
+    const tipProps = tipButton && !tipButton.dim ? { color: desk ? accentInk : theme.accent } : desk ? { color: deskInk(theme.fg, DK.fg) } : theme.fg ? { color: theme.fg } : {}
 
     const sizePad = desk ? '\u2007' : ' '
     const cellsOf = (n: FileNode): Partial<Record<Col, Seg>> => {
@@ -3178,7 +3196,7 @@ export const register: Register = (on, options) => {
     const rowSpec = (r: (typeof rows)[number]): RowSpec => rowParts(r).spec
     const scopeName = t.searchScope ? `${relative(t.root, t.searchScope)}/` : ''
     const scopeChip = () => !scopeName ? null : desk ? (
-      <Box key="scope-chip" position="relative" flexShrink={0} flexDirection="row" alignItems="center" marginLeft={1} paddingX={1} backgroundColor={DESK.toolOn}>
+      <Box key="scope-chip" position="relative" flexShrink={0} flexDirection="row" alignItems="center" marginLeft={1} paddingX={1} backgroundColor={DK.toolOn}>
         <Text color={accentInk}>{`in ${scopeName}`}</Text>
         <Text color={glow(mutedInk, 'scope')} hover={{ color: lighten(mutedInk) }}>{' ×'}</Text>
         <Box position="absolute" top={0} left={0} right={0} bottom={0}>
@@ -3239,7 +3257,7 @@ export const register: Register = (on, options) => {
       const n = p.n
       const icon = nodeIcon(n, r.open, p.isRepo)
       const tone = tones[p.tone]
-      const iconInk = p.lit ? (tone?.solid ?? accentInk) : ink(p.iconColor, n.kind === 'dir' ? accentInk : mutedInk)
+      const iconInk = p.lit ? (tone?.solid ?? accentInk) : deskInk(p.iconColor, n.kind === 'dir' ? accentInk : mutedInk)
       const strike = p.status === 'D' && n.kind !== 'dir'
       const name = p.lit
         ? <Client key={`lit:${n.id}`} module="./rows.tsx" props={{ rows: [{ id: '', left: clean([{ t: n.name, sh: p.tone, b: p.isBright }]), right: [] }], active: '', activeBg: '', hoverBg: '', tones: rowColors.tones, pointer: false } satisfies RowsProps} />
@@ -3247,7 +3265,7 @@ export const register: Register = (on, options) => {
       return (
         <Box key={`row:${n.id}`} position="relative" flexDirection="row" alignItems="center" backgroundColor={n.id === t.cursor ? deskSel : undefined} hover={{ backgroundColor: n.id === t.cursor ? deskSel : deskHover }}>
           {n.id === t.cursor && Svg ? <Box key={`bar:${n.id}`} position="absolute" top={0} left={0} bottom={0}><Svg key={`bar-svg:${n.id}`} source={barSvg(accentInk)} alt="cursor" width={2} height={ROW_PX} /></Box> : null}
-          {Svg ? <Svg key={`icon:${n.id}`} source={rowSvg(r.depth, n.kind === 'dir' ? (r.open ? 'open' : 'closed') : null, icon, iconInk)} alt={`${n.kind === 'dir' ? 'folder' : n.kind === 'link' ? 'link' : 'file'} ${n.name}`} width={r.depth * STEP_PX + STEP_PX * 2 + GAP_PX} height={ROW_PX} /> : null}
+          {Svg ? <Svg key={`icon:${n.id}`} source={rowSvg(r.depth, n.kind === 'dir' ? (r.open ? 'open' : 'closed') : null, icon, iconInk, mutedInk, GAP_PX, DK.guide)} alt={`${n.kind === 'dir' ? 'folder' : n.kind === 'link' ? 'link' : 'file'} ${n.name}`} width={r.depth * STEP_PX + STEP_PX * 2 + GAP_PX} height={ROW_PX} /> : null}
           <Box flexGrow={1} flexShrink={1} overflow="hidden">{name}</Box>
           {tailCols(p.cells, `tail:${n.id}`)}
           <Box width={2} flexShrink={0} flexDirection="row" justifyContent="flex-end" alignItems="center">
@@ -3616,7 +3634,7 @@ export const register: Register = (on, options) => {
         {desk && Svg ? (
           <Box key="head" flexDirection="row" alignItems="center">
             <Box flexDirection="row" alignItems="center" flexShrink={1} overflow="hidden" backgroundColor={t.cursor === t.root ? deskSel : undefined}>
-              <Svg key="root-icon" source={rowSvg(0, 'open', t.top === t.root ? 'folder-git' : 'folder-open', accentInk, DESK.muted, 0)} alt="root folder" width={STEP_PX * 2} height={ROW_PX} />
+              <Svg key="root-icon" source={rowSvg(0, 'open', t.top === t.root ? 'folder-git' : 'folder-open', accentInk, DK.muted, 0, DK.guide)} alt="root folder" width={STEP_PX * 2} height={ROW_PX} />
               <Button key="root" plain onPress={() => void selectRoot($).then(() => focusPane($, t.root, treeKey()))}>
                 <Text bold>{header}</Text>
               </Button>
@@ -3651,10 +3669,10 @@ export const register: Register = (on, options) => {
         ) : <Text key="git-hint" {...mutedText}>{unicode ? '± ' : '\u{ea68} '}No git repo</Text>)}
         {searchGap ? <Text key="gap-above"> </Text> : null}
         {desk && Svg ? (
-          <Box key="search-bar" flexDirection="row" alignItems="center" backgroundColor={DESK.field} paddingX={1}>
+          <Box key="search-bar" flexDirection="row" alignItems="center" backgroundColor={DK.field} paddingX={1}>
             <Svg key="search-icon" source={iconSvg('search', mutedInk, 14)} alt="search" width={14} height={14} />
             {zjump.on ? (
-              <Box key="jump-chip" flexShrink={0} flexDirection="row" marginLeft={1} paddingX={1} backgroundColor={DESK.toolOn}><Text color={accentInk}>jump</Text></Box>
+              <Box key="jump-chip" flexShrink={0} flexDirection="row" marginLeft={1} paddingX={1} backgroundColor={DK.toolOn}><Text color={accentInk}>jump</Text></Box>
             ) : scopeChip()}
             <Box flexGrow={1} flexShrink={1} marginLeft={1} flexDirection="column">
               {zjump.on ? <>

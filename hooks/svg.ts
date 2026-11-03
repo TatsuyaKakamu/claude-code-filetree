@@ -159,6 +159,23 @@ export const DESK = {
   delBg: '#3b2226',
 } as const
 
+export type DeskColors = { [K in keyof typeof DESK]: string }
+
+export const DESK_LIGHT: DeskColors = {
+  accent: '#2f6fd6',
+  muted: '#6e6e76',
+  guide: '#d8d8dc',
+  fg: '#2b2b2b',
+  urgent: '#c62828',
+  selection: '#d4e3f8',
+  hover: '#eceef1',
+  field: '#f0f0f2',
+  edge: '#dcdce0',
+  toolOn: '#dbe6f7',
+  addBg: '#dcf3e2',
+  delBg: '#fbe0e3',
+}
+
 const ANSI: Record<number, string> = {
   1: '#ef5350',
   2: '#3fb950',
@@ -167,6 +184,16 @@ const ANSI: Record<number, string> = {
   5: '#b07ce8',
   6: '#2ab3a6',
   8: '#85858c',
+}
+
+const ANSI_LIGHT: Record<number, string> = {
+  1: '#c62828',
+  2: '#1a7f37',
+  3: '#9a6700',
+  4: '#2f6fd6',
+  5: '#8250df',
+  6: '#1b7c83',
+  8: '#6e6e76',
 }
 
 export const DESK_GIT: Record<string, string> = {
@@ -178,17 +205,26 @@ export const DESK_GIT: Record<string, string> = {
   T: '#d99a1e',
 }
 
+export const DESK_GIT_LIGHT: Record<string, string> = {
+  A: '#1a7f37',
+  '?': '#1a7f37',
+  R: '#2f6fd6',
+  C: '#2f6fd6',
+  M: '#9a6700',
+  T: '#9a6700',
+}
+
 export function lighten(color: string, by = 0.3): string {
   if (!/^#[0-9a-f]{6}$/i.test(color)) return color
   const v = parseInt(color.slice(1), 16)
   return `#${[16, 8, 0].map(sh => Math.round(((v >> sh) & 255) + (255 - ((v >> sh) & 255)) * by).toString(16).padStart(2, '0')).join('')}`
 }
 
-export function ink(color: string | undefined, fallback: string = DESK.muted): string {
+export function ink(color: string | undefined, fallback: string = DESK.muted, light = false): string {
   if (!color) return fallback
   if (/^#[0-9a-f]{6}$/i.test(color)) return color
   const n = /^ansi256\((\d+)\)$/.exec(color)
-  return (n ? ANSI[Number(n[1])] : undefined) ?? fallback
+  return (n ? (light ? ANSI_LIGHT : ANSI)[Number(n[1])] : undefined) ?? fallback
 }
 
 const glyph = (name: IconName, color: string, x: number, y: number, size: number, stroke?: number): string => {
@@ -216,9 +252,9 @@ export const GAP_PX = 6
 export const CHEVRON_PX = 9
 export const STEP_PX = 16
 
-export function rowSvg(depth: number, chevron: 'open' | 'closed' | null, icon: IconName | null, color: string, chevronColor: string = DESK.muted, gap: number = GAP_PX): string {
+export function rowSvg(depth: number, chevron: 'open' | 'closed' | null, icon: IconName | null, color: string, chevronColor: string = DESK.muted, gap: number = GAP_PX, guide: string = DESK.guide): string {
   const w = depth * STEP_PX + STEP_PX * 2 + gap
-  const guides = Array.from({ length: depth }, (_, i) => `<rect x="${i * STEP_PX + 7.5}" y="0" width="1" height="${ROW_PX}" fill="${DESK.guide}" stroke="none"/>`).join('')
+  const guides = Array.from({ length: depth }, (_, i) => `<rect x="${i * STEP_PX + 7.5}" y="0" width="1" height="${ROW_PX}" fill="${guide}" stroke="none"/>`).join('')
   const x = depth * STEP_PX
   const chev = chevron ? glyph(chevron === 'open' ? 'chevron-down' : 'chevron-right', chevronColor, x + (STEP_PX - CHEVRON_PX) / 2, (ROW_PX - CHEVRON_PX) / 2, CHEVRON_PX, 3.2) : ''
   const pic = icon ? glyph(icon, color, x + STEP_PX, (ROW_PX - 16) / 2, 16) : ''
